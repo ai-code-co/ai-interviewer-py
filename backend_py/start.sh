@@ -1,4 +1,5 @@
 #!/bin/bash
+pip install rq
 
 # 1. Start the Worker in the background
 python run_worker.py &

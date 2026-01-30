@@ -40,9 +40,10 @@ class Settings:
         )
         self.mail_from_name: str = os.getenv("MAIL_FROM_NAME", "admin")
 
-        # Frontend / CORS
-        self.app_url: str = os.getenv("APP_URL", "http://localhost:3000")
-        self.cors_origin: str = os.getenv("CORS_ORIGIN", "http://localhost:3000")
+        self.app_url: str = os.getenv("APP_URL", os.getenv("RENDER_EXTERNAL_URL", "http://localhost:3001"))
+        
+        # For CORS, we need the Frontend URL
+        self.cors_origin: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
         # Redis / Queue
         self.redis_host: str = os.getenv("REDIS_HOST", "127.0.0.1")

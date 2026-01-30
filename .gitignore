@@ -1,0 +1,5 @@
+backend_py/local_uploads/
+backend_py/.env
+frontend/.env.local
+# frontend/package-lock.json  # Uncomment this line only if you have a specific reason to ignore package-lock.json
+frontend/node_modules/

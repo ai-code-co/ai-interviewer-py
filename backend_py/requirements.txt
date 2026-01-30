@@ -1,0 +1,14 @@
+## backend_py/requirements.txt
+fastapi
+uvicorn[standard]
+python-dotenv
+supabase
+redis
+rq
+openai
+requests
+pdfplumber
+python-docx
+pydantic
+nest_asyncio
+python-multipart

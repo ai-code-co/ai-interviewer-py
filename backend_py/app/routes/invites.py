@@ -34,7 +34,7 @@ async def send_invite(payload: Dict[str, Any]) -> Dict[str, Any]:
     settings = get_settings()
     
     # Generate the link for the candidate to Upload Resume
-    invite_url = f"{settings.app_url.rstrip('/')}/apply?token={token}"
+    invite_url = f"{settings.app_url.rstrip('/')}/{token}"
 
     # Send email
     try:

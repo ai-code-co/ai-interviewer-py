@@ -1,91 +1,78 @@
-## backend_py/app/services/storage_service.py
 from __future__ import annotations
 import os
 from hashlib import sha256
 from uuid import uuid4
-import requests
 from ..config import get_settings
 
-# Local Upload Directory (For Videos)
+# Ensure upload directory exists
 UPLOAD_DIR = os.path.join(os.getcwd(), "local_uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# --- HELPER: Upload to Supabase (Cloud) ---
-async def _upload_to_supabase(bucket: str, path: str, file_bytes: bytes, content_type: str) -> str:
-    settings = get_settings()
-    url = f"{settings.supabase_url.rstrip('/')}/storage/v1/object/{bucket}/{path}"
-    headers = {
-        "Authorization": f"Bearer {settings.supabase_service_role_key}",
-        "apikey": settings.supabase_service_role_key,
-        "Content-Type": content_type,
-        "x-upsert": "true",
-    }
-    resp = requests.put(url, headers=headers, data=file_bytes, timeout=60)
-    if resp.status_code >= 400:
-        raise RuntimeError(f"Supabase Upload Failed: {resp.status_code} {resp.text}")
-    
-    return f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket}/{path}"
-
-# --- HELPER: Save to Local Disk (Server) ---
-def _save_to_local(filename: str, file_bytes: bytes) -> str:
-    settings = get_settings()
-    file_path = os.path.join(UPLOAD_DIR, filename)
-    with open(file_path, "wb") as f:
-        f.write(file_bytes)
-    print(f"✅ Saved locally: {file_path}")
-    return f"{settings.app_url}/uploads/{filename}"
-
-
 # ---------------------------------------------------------
-# 1. RESUME UPLOAD (Cloud)
-# ---------------------------------------------------------
-async def upload_resume(file_bytes: bytes, file_name: str, file_type: str, candidate_id: str) -> dict:
-    try:
-        file_hash = sha256(file_bytes).hexdigest()
-        sanitized_name = "".join(ch if ch.isalnum() or ch in (".", "-") else "_" for ch in file_name)
-        from time import time
-        path = f"{candidate_id}/{int(time()*1000)}-{sanitized_name}"
-
-        await _upload_to_supabase("resumes", path, file_bytes, file_type)
-        return {"path": path, "hash": file_hash}
-    except Exception as e:
-        raise RuntimeError(f"Failed to upload resume: {e}")
-
-
-# ---------------------------------------------------------
-# 2. INTERVIEW MEDIA (Hybrid: Video=Local, PDF=Cloud)
+# 1. VIDEO / AUDIO UPLOAD (For Interview)
 # ---------------------------------------------------------
 async def upload_interview_media(file_bytes: bytes, session_id: str, question_id: str = "full_session", media_type: str = "video") -> str:
-    filename_base = f"{session_id}_{question_id}_{uuid4()}"
+    settings = get_settings()
+    
+    # UPDATE: Handle PDF extension
+    if media_type == "pdf":
+        ext = "pdf"
+    elif media_type == "video":
+        ext = "webm"
+    else:
+        ext = "webm"
+    
+    filename = f"{session_id}_{question_id}_{uuid4()}.{ext}"
+    file_path = os.path.join(UPLOAD_DIR, filename)
 
     try:
-        if media_type == "video":
-            # HEAVY FILE -> LOCAL DISK
-            filename = f"{filename_base}.webm"
-            return _save_to_local(filename, file_bytes)
-            
-        elif media_type == "pdf":
-            # LIGHT FILE -> SUPABASE CLOUD (Safe storage)
-            path = f"{session_id}/{question_id}.pdf"
-            return await _upload_to_supabase("interview-transcripts", path, file_bytes, "application/pdf")
-            
-        elif media_type == "audio":
-            # WHISPER CHUNK -> SUPABASE CLOUD (Better access for workers)
-            path = f"{session_id}/{filename_base}.webm"
-            return await _upload_to_supabase("interview-audio", path, file_bytes, "audio/webm")
-            
-        else:
-            return _save_to_local(f"{filename_base}.dat", file_bytes)
+        with open(file_path, "wb") as f:
+            f.write(file_bytes)
+        
+        print(f"✅ Saved {media_type} locally: {file_path}")
+        return f"{settings.app_url}/uploads/{filename}"
 
     except Exception as e:
-        raise RuntimeError(f"Failed to save {media_type}: {e}")
+        raise RuntimeError(f"Failed to save local media: {e}")
+# ---------------------------------------------------------
+# 2. RESUME UPLOAD (For Apply Form)
+# ---------------------------------------------------------
+async def upload_resume(file_bytes: bytes, file_name: str, file_type: str, candidate_id: str) -> dict:
+    """
+    Saves the resume LOCALLY to 'local_uploads'.
+    Matches the signature expected by apply.py
+    """
+    try:
+        # Generate hash
+        file_hash = sha256(file_bytes).hexdigest()
+        
+        # Generate safe filename
+        sanitized_name = "".join(ch if ch.isalnum() or ch in (".", "-") else "_" for ch in file_name)
+        final_name = f"resume_{candidate_id}_{uuid4()}_{sanitized_name}"
+        file_path = os.path.join(UPLOAD_DIR, final_name)
 
-# Alias
-upload_audio = upload_interview_media
+        # Write file
+        with open(file_path, "wb") as f:
+            f.write(file_bytes)
+            
+        print(f"✅ Saved resume locally: {file_path}")
+
+        # Return dict expected by apply.py (Step 4)
+        return {
+            "path": final_name,  # We store just the filename as the path
+            "hash": file_hash
+        }
+    except Exception as e:
+        raise RuntimeError(f"Failed to save local resume: {e}")
+
 
 # ---------------------------------------------------------
-# 3. GET RESUME URL (Cloud)
+# 3. GET URL HELPER
 # ---------------------------------------------------------
 async def get_resume_url(storage_path: str, bucket: str) -> str:
+    """
+    Returns the localhost URL for the file.
+    Ignores 'bucket' since we are using one local folder.
+    """
     settings = get_settings()
-    return f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket}/{storage_path}"
+    return f"{settings.app_url}/uploads/{storage_path}"

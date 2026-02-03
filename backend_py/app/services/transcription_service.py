@@ -22,8 +22,7 @@ def transcribe_audio_chunk(file_bytes: bytes) -> str:
             transcript = client.audio.transcriptions.create(
                 model="whisper-1", 
                 file=audio_file,
-                language="en", # Force English for consistency
-                prompt="This is a technical job interview answer." # Context helps accuracy
+                prompt="This is a job interview answer."
             )
             
         return transcript.text

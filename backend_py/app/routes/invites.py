@@ -14,7 +14,6 @@ from ..services.email_service import send_invite_email, should_soft_fail_mailgun
 
 router = APIRouter(prefix="/api/invites", tags=["invites"])
 
-
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def send_invite(payload: Dict[str, Any]) -> Dict[str, Any]:
     email = payload.get("email")
@@ -22,8 +21,6 @@ async def send_invite(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     if not email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required")
-    if not issued_by:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="issued_by (user ID) is required")
 
     email_regex = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
     if not email_regex.match(email):

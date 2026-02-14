@@ -1,20 +1,9 @@
-import { createClient } from "@/lib/supabase/server"
-import { redirect } from "next/navigation"
 import { StatsCards } from "@/components/dashboard/stats-cards"
 import { RecentJobs } from "@/components/dashboard/recent-jobs"
 import { InvitationsOverview } from "@/components/dashboard/invitations-overview"
 import { RecentActivity } from "@/components/dashboard/recent-activity"
 
-export default async function DashboardPage() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
-    redirect("/login")
-  }
-
+export default function DashboardPage() {
   return (
     <div className="space-y-8">
       <div>
@@ -39,4 +28,3 @@ export default async function DashboardPage() {
     </div>
   )
 }
-

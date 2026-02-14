@@ -79,4 +79,26 @@ def extract_resume_text(buffer: bytes, filename: str) -> ParseResult:
         return _parse_pdf(buffer)
     if lower.endswith(".docx") or lower.endswith(".doc"):
         return _parse_docx(buffer)
-    raise RuntimeError("Unsupported resume format. Only PDF and DOCX files are supported.")
+    # Fallback: detect type from file signature for storage URLs without extension
+    if buffer.startswith(b"%PDF"):
+        return _parse_pdf(buffer)
+    if buffer.startswith(b"PK\x03\x04"):
+        # DOCX is a zip container; best-effort parse
+        return _parse_docx(buffer)
+
+    # Last-resort attempts for loosely detected content
+    pdf_error = None
+    docx_error = None
+    try:
+        return _parse_pdf(buffer)
+    except Exception as exc:  # noqa: BLE001
+        pdf_error = exc
+    try:
+        return _parse_docx(buffer)
+    except Exception as exc:  # noqa: BLE001
+        docx_error = exc
+
+    raise RuntimeError(
+        "Unsupported resume format. Only PDF and DOCX files are supported. "
+        f"PDF parse error: {pdf_error}; DOCX parse error: {docx_error}"
+    )

@@ -1,21 +1,35 @@
+"use client"
+
+import { useEffect } from "react"
+import { usePathname, useRouter } from "next/navigation"
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { createClient } from "@/lib/supabase/server"
-import { redirect } from "next/navigation"
+import { useAuth } from "@/components/auth/auth-provider"
 
-export default async function ProtectedLayout({
+export default function ProtectedLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { user, loading } = useAuth()
+  const router = useRouter()
+  const pathname = usePathname()
 
-  if (!user) {
-    redirect("/login")
+  useEffect(() => {
+    if (!loading && !user && pathname !== "/login") {
+      router.replace("/login")
+    }
+  }, [loading, user, pathname, router])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent" />
+      </div>
+    )
   }
+
+  if (!user) return null
 
   return (
     <div className="min-h-screen flex">
@@ -34,4 +48,3 @@ export default async function ProtectedLayout({
     </div>
   )
 }
-

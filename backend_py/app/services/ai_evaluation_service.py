@@ -1,11 +1,11 @@
-## backend_py/app/services/ai_evaluation_service.py
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, TypedDict, Union
 
 from openai import OpenAI
 
-from ..config import get_settings, get_supabase_client
+from ..config import get_settings
+from ..db import execute, fetch_one, from_json_db, to_json_db
 
 
 Recommendation = Literal["STRONG_MATCH", "POTENTIAL_MATCH", "WEAK_MATCH"]
@@ -33,14 +33,18 @@ def _get_openai_client() -> OpenAI:
 
 
 async def get_job_details(job_id: str) -> JobDetails:
-    supabase = get_supabase_client()
-    res = supabase.table("jobs").select("id, title, description").eq("id", job_id).single().execute()
-    err = getattr(res, "error", None)
-    if err or not res.data or (getattr(res, "status_code", 200) >= 400):
-        message = err.message if err and hasattr(err, "message") else "Job not found"
-        raise RuntimeError(f"Failed to fetch job details: {message}")
-    data = res.data
-    return JobDetails(id=str(data["id"]), title=data["title"], description=data.get("description"))
+    row = fetch_one(
+        """
+        SELECT id, title, description
+        FROM jobs
+        WHERE id = :job_id
+        LIMIT 1
+        """,
+        {"job_id": job_id},
+    )
+    if not row:
+        raise RuntimeError("Failed to fetch job details: Job not found")
+    return JobDetails(id=str(row["id"]), title=row["title"], description=row.get("description"))
 
 
 def _normalize_field(field: Any) -> Union[Dict[str, str], List[str]]:
@@ -130,7 +134,6 @@ IMPORTANT:
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError("AI returned invalid JSON format") from exc
 
-    # Validate / normalize
     raw_score = parsed.get("score")
     score = int(raw_score) if isinstance(raw_score, (int, float, str)) and str(raw_score).isdigit() else None
     if score is None or score < 0 or score > 100:
@@ -167,80 +170,110 @@ IMPORTANT:
 
 
 async def save_evaluation(candidate_id: str, result: AIEvaluationResult) -> None:
-    supabase = get_supabase_client()
-    payload = {
-        "candidate_id": candidate_id,
-        "score": result["score"],
-        "recommendation": result["recommendation"],
-        "matched_skills": result["matched_skills"],
-        "missing_skills": result["missing_skills"],
-        "strengths": result["strengths"],
-        "weaknesses": result["weaknesses"],
-        "summary": result["summary"],
-        "status": "COMPLETED",
-    }
-    res = (
-        supabase.table("ai_evaluations")
-        .upsert(payload, on_conflict="candidate_id")
-        .execute()
+    execute(
+        """
+        INSERT INTO ai_evaluations (
+            id, candidate_id, score, recommendation, matched_skills, missing_skills,
+            strengths, weaknesses, summary, status, created_at, updated_at
+        )
+        VALUES (
+            UUID(), :candidate_id, :score, :recommendation, :matched_skills, :missing_skills,
+            :strengths, :weaknesses, :summary, 'COMPLETED', NOW(), NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            score = VALUES(score),
+            recommendation = VALUES(recommendation),
+            matched_skills = VALUES(matched_skills),
+            missing_skills = VALUES(missing_skills),
+            strengths = VALUES(strengths),
+            weaknesses = VALUES(weaknesses),
+            summary = VALUES(summary),
+            status = 'COMPLETED',
+            error_message = NULL,
+            updated_at = NOW()
+        """,
+        {
+            "candidate_id": candidate_id,
+            "score": result["score"],
+            "recommendation": result["recommendation"],
+            "matched_skills": to_json_db(result["matched_skills"]),
+            "missing_skills": to_json_db(result["missing_skills"]),
+            "strengths": to_json_db(result["strengths"]),
+            "weaknesses": to_json_db(result["weaknesses"]),
+            "summary": result["summary"],
+        },
     )
-    err = getattr(res, "error", None)
-    if err or (getattr(res, "status_code", 200) >= 400):
-        msg = err.message if err and hasattr(err, "message") else "Unknown error"
-        raise RuntimeError(f"Failed to save evaluation: {msg}")
 
 
 async def mark_evaluation_failed(candidate_id: str, error_message: str) -> None:
-    supabase = get_supabase_client()
-    payload = {
-        "candidate_id": candidate_id,
-        "status": "FAILED",
-        "error_message": (error_message or "")[:1000],
-        "matched_skills": [],
-        "missing_skills": [],
-        "strengths": [],
-        "weaknesses": [],
-        "summary": "Evaluation failed",
-    }
-    res = (
-        supabase.table("ai_evaluations")
-        .upsert(payload, on_conflict="candidate_id")
-        .execute()
-    )
-    err = getattr(res, "error", None)
-    if err or (getattr(res, "status_code", 200) >= 400):
-        # Log-like behavior only; don't raise to avoid loops
-        msg = err.message if err and hasattr(err, "message") else "Unknown error"
-        print("Failed to mark evaluation as failed:", msg)
+    try:
+        execute(
+            """
+            INSERT INTO ai_evaluations (
+                id, candidate_id, score, recommendation, matched_skills, missing_skills,
+                strengths, weaknesses, summary, status, error_message, created_at, updated_at
+            )
+            VALUES (
+                UUID(), :candidate_id, 0, 'POTENTIAL_MATCH', :matched_skills, :missing_skills,
+                :strengths, :weaknesses, 'Evaluation failed', 'FAILED', :error_message, NOW(), NOW()
+            )
+            ON DUPLICATE KEY UPDATE
+                status = 'FAILED',
+                error_message = VALUES(error_message),
+                matched_skills = VALUES(matched_skills),
+                missing_skills = VALUES(missing_skills),
+                strengths = VALUES(strengths),
+                weaknesses = VALUES(weaknesses),
+                summary = VALUES(summary),
+                updated_at = NOW()
+            """,
+            {
+                "candidate_id": candidate_id,
+                "error_message": (error_message or "")[:1000],
+                "matched_skills": to_json_db([]),
+                "missing_skills": to_json_db([]),
+                "strengths": to_json_db([]),
+                "weaknesses": to_json_db([]),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        print("Failed to mark evaluation as failed:", exc)
 
 
 async def create_pending_evaluation(candidate_id: str) -> None:
-    """
-    Create or update an ai_evaluations row in PENDING state so the frontend
-    can immediately show that an evaluation is queued.
-    """
-    supabase = get_supabase_client()
-    payload = {
-        "candidate_id": candidate_id,
-        "status": "PENDING",
-        "summary": "Evaluation queued...",
-        "matched_skills": [],
-        "missing_skills": [],
-        "strengths": [],
-        "weaknesses": [],
-        # FIX: Add these placeholder values to satisfy Database Constraints
-        "score": 0, 
-        "recommendation": "POTENTIAL_MATCH" 
-    }
     try:
-        res = (
-            supabase.table("ai_evaluations")
-            .upsert(payload, on_conflict="candidate_id")
-            .execute()
+        execute(
+            """
+            INSERT INTO ai_evaluations (
+                id, candidate_id, score, recommendation, matched_skills, missing_skills,
+                strengths, weaknesses, summary, status, created_at, updated_at
+            )
+            VALUES (
+                UUID(), :candidate_id, 0, 'POTENTIAL_MATCH', :matched_skills, :missing_skills,
+                :strengths, :weaknesses, 'Evaluation queued...', 'PENDING', NOW(), NOW()
+            )
+            ON DUPLICATE KEY UPDATE
+                status = 'PENDING',
+                summary = 'Evaluation queued...',
+                updated_at = NOW()
+            """,
+            {
+                "candidate_id": candidate_id,
+                "matched_skills": to_json_db([]),
+                "missing_skills": to_json_db([]),
+                "strengths": to_json_db([]),
+                "weaknesses": to_json_db([]),
+            },
         )
-        err = getattr(res, "error", None)
-        if err:
-            err_msg = getattr(err, "message", str(err))
-            print(f"Failed to create pending evaluation row: {err_msg}")
     except Exception as exc:  # noqa: BLE001
         print(f"Exception creating pending evaluation row: {exc}")
+
+
+def normalize_ai_evaluation_row(row: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not row:
+        return None
+    row["matched_skills"] = from_json_db(row.get("matched_skills"), [])
+    row["missing_skills"] = from_json_db(row.get("missing_skills"), [])
+    row["strengths"] = from_json_db(row.get("strengths"), [])
+    row["weaknesses"] = from_json_db(row.get("weaknesses"), [])
+    return row

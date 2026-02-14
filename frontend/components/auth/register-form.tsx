@@ -3,7 +3,6 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -15,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { useAuth } from "@/components/auth/auth-provider"
 
 export function RegisterForm() {
   const [email, setEmail] = useState("")
@@ -23,7 +23,7 @@ export function RegisterForm() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const router = useRouter()
-  const supabase = createClient()
+  const { signUp } = useAuth()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -42,32 +42,15 @@ export function RegisterForm() {
     setLoading(true)
 
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/api/auth/callback`,
-        },
-      })
-
-      if (error) throw error
-
-      // If email confirmation is required, show success message
-      if (data.user && !data.session) {
-        setError(null)
-        // Show success message instead of error
-        alert('Please check your email to confirm your account!')
-        router.push("/login")
-        return
+      if (!email.trim()) {
+        throw new Error("Email is required")
       }
-
-      // If session exists, user is already confirmed
-      if (data.session) {
-        router.push("/dashboard")
-        router.refresh()
-      }
-    } catch (error: any) {
-      setError(error.message || "An error occurred during registration")
+      await signUp(email.trim())
+      router.push("/dashboard")
+      router.refresh()
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "An error occurred during registration"
+      setError(message)
     } finally {
       setLoading(false)
     }
@@ -145,4 +128,3 @@ export function RegisterForm() {
     </Card>
   )
 }
-

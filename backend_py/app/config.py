@@ -2,11 +2,10 @@
 import os
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 from redis import Redis
-# FIX: Import ClientOptions
-from supabase import Client, create_client, ClientOptions
 
 
 # Always load .env from the backend_py directory
@@ -22,15 +21,44 @@ class Settings:
         self.port: int = int(os.getenv("PORT", "3001"))
         self.node_env: str = os.getenv("NODE_ENV", "development")
 
-        # Supabase
-        self.supabase_url: str = os.getenv("SUPABASE_URL", "")
-        self.supabase_anon_key: str = os.getenv("SUPABASE_ANON_KEY", "")
-        self.supabase_service_role_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+        # TiDB / MySQL
+        self.db_name: str = os.getenv("DB_NAME", "")
+        self.db_user: str = os.getenv("DB_USER", "")
+        self.db_password: str = os.getenv("DB_PASSWORD", "")
+        self.db_host: str = os.getenv("DB_HOST", "127.0.0.1")
+        self.db_port: int = int(os.getenv("DB_PORT", "3306"))
+        self.database_url: str = os.getenv("DATABASE_URL", "")
+        self.sqlalchemy_database_url: str = self._build_database_url()
+        if not self.sqlalchemy_database_url:
+            raise RuntimeError(
+                "DATABASE_URL or DB_NAME/DB_USER/DB_HOST/DB_PORT environment variables are required"
+            )
+        db_url_lower = self.sqlalchemy_database_url.lower()
+        self.db_ssl_enabled: bool = self._to_bool(
+            os.getenv("DB_SSL_ENABLED"),
+            default=("tidbcloud.com" in db_url_lower),
+        )
+        self.db_ssl_verify_cert: bool = self._to_bool(
+            os.getenv("DB_SSL_VERIFY_CERT"),
+            default=True,
+        )
+        self.db_ssl_verify_identity: bool = self._to_bool(
+            os.getenv("DB_SSL_VERIFY_IDENTITY"),
+            default=True,
+        )
+        self.db_ssl_ca: str = os.getenv("DB_SSL_CA", "")
 
-        if not self.supabase_url:
-            raise RuntimeError("SUPABASE_URL environment variable is required")
-        if not self.supabase_anon_key:
-            raise RuntimeError("SUPABASE_ANON_KEY environment variable is required")
+        # Cloudinary
+        self.cloudinary_cloud_name: str = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+        self.cloudinary_api_key: str = os.getenv("CLOUDINARY_API_KEY", "")
+        self.cloudinary_api_secret: str = os.getenv("CLOUDINARY_API_SECRET", "")
+        self.cloudinary_url: str = os.getenv("CLOUDINARY_URL", "")
+        if not self.cloudinary_url and (
+            not self.cloudinary_cloud_name or not self.cloudinary_api_key or not self.cloudinary_api_secret
+        ):
+            raise RuntimeError(
+                "Cloudinary is not fully configured. Set CLOUDINARY_URL or CLOUDINARY_CLOUD_NAME/CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET."
+            )
 
         # Email (Mailgun)
         self.mailgun_api_key: str = os.getenv("MAILGUN_API_KEY", "")
@@ -56,35 +84,33 @@ class Settings:
         if not self.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY environment variable is required")
 
+    def _build_database_url(self) -> str:
+        if self.database_url and self.database_url.strip():
+            url = self.database_url.strip()
+            if url.startswith("mysql://"):
+                return "mysql+pymysql://" + url[len("mysql://") :]
+            if url.startswith("mysql+mysqldb://"):
+                return "mysql+pymysql://" + url[len("mysql+mysqldb://") :]
+            return url
+        if not self.db_name or not self.db_user:
+            return ""
+        encoded_user = quote_plus(self.db_user)
+        encoded_password = quote_plus(self.db_password)
+        return (
+            f"mysql+pymysql://{encoded_user}:{encoded_password}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}?charset=utf8mb4"
+        )
+
+    @staticmethod
+    def _to_bool(value: str | None, default: bool = False) -> bool:
+        if value is None:
+            return default
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
 
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
-
-
-@lru_cache()
-def get_supabase_client() -> Client:
-    settings = get_settings()
-    return create_client(settings.supabase_url, settings.supabase_anon_key)
-
-
-@lru_cache()
-def get_supabase_admin_client() -> Client | None:
-    settings = get_settings()
-    if not settings.supabase_service_role_key:
-        return None
-    
-    # FIX: Use ClientOptions Object instead of a Dictionary
-    options = ClientOptions(
-        auto_refresh_token=False,
-        persist_session=False
-    )
-    
-    return create_client(
-        settings.supabase_url,
-        settings.supabase_service_role_key,
-        options=options,
-    )
 
 
 @lru_cache()

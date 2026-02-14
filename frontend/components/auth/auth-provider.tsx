@@ -1,59 +1,95 @@
 "use client"
 
-import { createContext, useContext, useEffect, useState } from "react"
-import { User } from "@supabase/supabase-js"
-import { createClient } from "@/lib/supabase/client"
+import { createContext, useContext, useState } from "react"
 import { useRouter } from "next/navigation"
 
+export type LocalUser = {
+  id: string
+  email: string
+}
+
 type AuthContextType = {
-  user: User | null
+  user: LocalUser | null
   loading: boolean
+  signIn: (email: string) => Promise<void>
+  signUp: (email: string) => Promise<void>
   signOut: () => Promise<void>
+}
+
+const STORAGE_KEY = "ai_interviewer_auth_user"
+const DEFAULT_USER: LocalUser = {
+  id: "00000000-0000-0000-0000-000000000001",
+  email: "admin@local.test",
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
+  signIn: async () => {},
+  signUp: async () => {},
   signOut: async () => {},
 })
 
+function loadUser(): LocalUser | null {
+  if (typeof window === "undefined") return null
+  const raw = window.localStorage.getItem(STORAGE_KEY)
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as LocalUser
+    if (parsed?.id && parsed?.email) return parsed
+    return null
+  } catch {
+    return null
+  }
+}
+
+function saveUser(user: LocalUser) {
+  if (typeof window === "undefined") return
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(user))
+}
+
+function clearUser() {
+  if (typeof window === "undefined") return
+  window.localStorage.removeItem(STORAGE_KEY)
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [user, setUser] = useState<LocalUser | null>(() => {
+    if (typeof window === "undefined") return DEFAULT_USER
+    const persisted = loadUser()
+    if (persisted) return persisted
+    saveUser(DEFAULT_USER)
+    return DEFAULT_USER
+  })
   const router = useRouter()
-  const supabase = createClient()
 
-  useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      setLoading(false)
-    })
+  const signIn = async (email: string) => {
+    const existing = loadUser()
+    const nextUser: LocalUser = {
+      id: existing?.id || DEFAULT_USER.id,
+      email,
+    }
+    saveUser(nextUser)
+    setUser(nextUser)
+    router.refresh()
+  }
 
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-      setLoading(false)
-      router.refresh()
-    })
-
-    return () => subscription.unsubscribe()
-  }, [router, supabase])
+  const signUp = async (email: string) => {
+    await signIn(email)
+  }
 
   const signOut = async () => {
-    await supabase.auth.signOut()
+    clearUser()
+    setUser(null)
     router.push("/login")
     router.refresh()
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, signOut }}>
+    <AuthContext.Provider value={{ user, loading: false, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
 export const useAuth = () => useContext(AuthContext)
-

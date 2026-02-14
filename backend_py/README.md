@@ -1,142 +1,119 @@
-<!-- backend_py/README.md -->
 ## Python Backend for AI Interviewer
 
-This directory contains a **FastAPI-based Python backend** that mirrors the existing Node/Express API in `backend/`.
+This directory contains the FastAPI backend used by the frontend app.
 
-The goals of this Python backend are:
+## Stack
 
-- Preserve the **same REST API surface** used by the frontend:
-  - `GET /health`
-  - `GET /api/jobs`, `GET /api/jobs/:id`, `POST /api/jobs`, `PUT /api/jobs/:id`, `DELETE /api/jobs/:id`
-  - `POST /api/invites`, `GET /api/invites`, `GET /api/invites/public/jobs`
-  - `GET /api/candidates`, `GET /api/candidates/:id`, `PUT /api/candidates/:id/status`
-  - `GET /api/apply/validate`, `POST /api/apply/submit`
-- Keep the **same infrastructure dependencies**:
-  - Supabase (DB + Storage)
-  - Redis for background jobs
-  - OpenAI for AI evaluations
-  - Mailgun for email
-- Provide an **asynchronous AI evaluation pipeline** using a Redis-backed worker.
+- FastAPI (API server)
+- TiDB/MySQL (database)
+- Cloudinary (file storage)
+- Redis + RQ (background jobs)
+- OpenAI (AI evaluation)
+- Mailgun (email)
 
-The original Node backend is left untouched in `backend/` so you can switch between them if needed.
-
----
-
-## Requirements
-
-Python 3.10+ is recommended.
-
-Install dependencies:
+## Setup
 
 ```bash
 cd backend_py
 python -m venv .venv
-source .venv/Scripts/activate  # on Windows PowerShell: .venv\Scripts\Activate.ps1
+source .venv/Scripts/activate  # PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-Copy your existing backend `.env` file (or create a new one) so the Python backend uses the same configuration:
+## Environment Variables
 
-```bash
-cp ../backend/.env .env  # or create .env manually
-```
-
-Required environment variables (same as Node backend):
+Use either `DATABASE_URL` or `DB_*` values.
 
 ```env
 PORT=3001
 NODE_ENV=development
 
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+APP_URL=http://localhost:3000
+FRONTEND_URL=http://localhost:3000
+
+# Preferred
+DATABASE_URL=mysql+pymysql://<user>:<password>@<host>:<port>/<database>
+
+# Optional fallback when DATABASE_URL is empty
+DB_NAME=ai_interview
+DB_USER=<user>
+DB_PASSWORD=<password>
+DB_HOST=127.0.0.1
+DB_PORT=3306
+
+# Optional DB TLS flags
+DB_SSL_ENABLED=true
+DB_SSL_VERIFY_CERT=true
+DB_SSL_VERIFY_IDENTITY=true
+DB_SSL_CA=
+
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_cloudinary_api_key
+CLOUDINARY_API_SECRET=your_cloudinary_api_secret
 
 MAILGUN_API_KEY=your_mailgun_api_key
 MAILGUN_DOMAIN=your_mailgun_domain
 MAIL_FROM_ADDRESS=noreply@yourdomain.com
-MAIL_FROM_NAME=admin
-
-APP_URL=http://localhost:3000
-CORS_ORIGIN=http://localhost:3000
+MAIL_FROM_NAME=AI Interviewer
 
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 
 OPENAI_API_KEY=your_openai_api_key
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4o
 ```
 
----
+## Database Migrations (SQL-first)
 
-## Running the API
+Migrations are versioned SQL files in:
 
-From `backend_py/`:
+- `app/tidb/migrations/`
 
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 3001 --reload
-```
+Applied migrations are tracked in DB table:
 
-Health check:
+- `schema_migrations`
 
-- `GET http://localhost:3001/health`
-
-The OpenAPI docs are available at:
-
-- Swagger UI: `http://localhost:3001/docs`
-- ReDoc: `http://localhost:3001/redoc`
-
----
-
-## Running the AI Evaluation Worker
-
-The AI evaluation is handled by a Redis-backed RQ worker that processes jobs from the `ai-evaluation` queue.
-
-Start Redis (same as the Node backend) and then run:
+Commands:
 
 ```bash
 cd backend_py
-python run_worker.py 
-``` 
-
-The worker will:
-
-1. Download resumes from Supabase Storage
-2. Extract text from PDF/DOC/DOCX
-3. Fetch job details from Supabase
-4. Call OpenAI for evaluation
-5. Save results to the `ai_evaluations` table
-
----
-
-## Project Structure
-
-```text
-backend_py/
-├── app/
-│   ├── main.py                # FastAPI app, routes, and health check
-│   ├── config.py              # Environment + Supabase + Redis config
-│   ├── queue.py               # RQ queue setup
-│   ├── routes/
-│   │   ├── jobs.py            # /api/jobs endpoints
-│   │   ├── invites.py         # /api/invites endpoints
-│   │   ├── candidates.py      # /api/candidates endpoints
-│   │   └── apply.py           # /api/apply endpoints + file upload
-│   ├── services/
-│   │   ├── ai_evaluation_service.py  # OpenAI + evaluation persistence
-│   │   ├── email_service.py          # Mailgun integration
-│   │   ├── resume_parser_service.py  # PDF/DOCX parsing
-│   │   └── storage_service.py        # Supabase Storage helpers
-│   └── workers/
-│       └── ai_evaluation_worker.py   # Job processing function used by RQ
-├── requirements.txt
-└── README.md
+python migrate.py status
+python migrate.py up
+python migrate.py new add_transcript_index
 ```
 
----
+Migration workflow for future DB changes:
+
+1. Create new migration file: `python migrate.py new <name>`
+2. Add forward-only SQL (`ALTER TABLE`, `CREATE INDEX`, etc.)
+3. Apply pending migrations: `python migrate.py up`
+4. Commit migration file to git
+
+Rules:
+
+- Do not edit previously applied migration files.
+- Create a new migration for each schema change.
+- `app/tidb/schema.sql` is a bootstrap snapshot, not the migration history.
+
+## Run API
+
+```bash
+cd backend_py
+uvicorn app.main:app --host 0.0.0.0 --port 3001 --reload
+```
+
+Health endpoint:
+
+- `GET http://localhost:3001/health`
+
+## Run Worker
+
+```bash
+cd backend_py
+python run_worker.py
+```
 
 ## Notes
 
-- The Python backend is designed to be **API-compatible** with the Node backend so the existing frontend can continue to work.
-- Error messages and validation rules are kept as close as possible to the Node version.
-- Retries and backoff for the AI evaluation jobs are handled by RQ’s own retry mechanisms (configurable per job).
-
+- Trailing slash redirects (`307`) from `/api/jobs` to `/api/jobs/` are normal in FastAPI.
+- For TiDB Cloud Serverless, use TLS and the correct prefixed username from TiDB Cloud connection details.

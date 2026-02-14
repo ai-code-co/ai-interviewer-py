@@ -1,3 +1,5 @@
+"use client"
+
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -8,14 +10,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { createClient } from "@/lib/supabase/server"
-import { redirect } from "next/navigation"
+import { useAuth } from "@/components/auth/auth-provider"
 
-export default async function Home() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+export default function Home() {
+  const { user, loading } = useAuth()
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -24,7 +22,7 @@ export default async function Home() {
           <h1 className="text-2xl font-bold">AI Interviewer</h1>
           <div className="flex items-center gap-4">
             <ThemeToggle />
-            {user ? (
+            {!loading && user ? (
               <Link href="/dashboard">
                 <Button>Go to Dashboard</Button>
               </Link>
@@ -53,7 +51,7 @@ export default async function Home() {
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="text-center space-y-2">
-              {user ? (
+              {!loading && user ? (
                 <>
                   <p className="text-muted-foreground">
                     You are signed in as {user.email}
@@ -84,7 +82,7 @@ export default async function Home() {
             </div>
           </CardContent>
         </Card>
-    </main>
+      </main>
     </div>
   )
 }

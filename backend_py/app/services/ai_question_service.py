@@ -1,8 +1,13 @@
-## backend_py/app/services/ai_question_service.py
 from __future__ import annotations
+
 import json
-from ..config import get_settings, get_supabase_client
+from uuid import uuid4
+
 from openai import OpenAI
+
+from ..config import get_settings
+from ..db import execute
+
 
 def generate_interview_questions(job_id: str, job_title: str, job_description: str) -> bool:
     """
@@ -14,7 +19,7 @@ def generate_interview_questions(job_id: str, job_title: str, job_description: s
 
     prompt = f"""
     You are an expert technical recruiter. Generate 4 interview questions for the role of "{job_title}".
-    
+
     Job Description:
     {job_description}
 
@@ -29,32 +34,33 @@ def generate_interview_questions(job_id: str, job_title: str, job_description: s
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.7
+            temperature=0.7,
         )
-        
-        content = response.choices[0].message.content.strip()
-        # Remove markdown code blocks if present
+
+        content = (response.choices[0].message.content or "").strip()
         if content.startswith("```json"):
             content = content.replace("```json", "").replace("```", "")
-        
-        questions = json.loads(content)
-        
-        supabase = get_supabase_client()
-        data_to_insert = []
-        
-        for idx, q_text in enumerate(questions):
-            data_to_insert.append({
-                "job_id": job_id,
-                "question_text": q_text,
-                "question_order": idx + 1
-            })
 
-        if data_to_insert:
-            supabase.table("interview_questions").insert(data_to_insert).execute()
-            return True
-            
-    except Exception as e:
-        print(f"Error generating questions: {e}")
+        questions = json.loads(content)
+        if not isinstance(questions, list):
+            return False
+
+        for idx, q_text in enumerate(questions):
+            if not str(q_text).strip():
+                continue
+            execute(
+                """
+                INSERT INTO interview_questions (id, job_id, question_text, question_order)
+                VALUES (:id, :job_id, :question_text, :question_order)
+                """,
+                {
+                    "id": str(uuid4()),
+                    "job_id": job_id,
+                    "question_text": str(q_text).strip(),
+                    "question_order": idx + 1,
+                },
+            )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error generating questions: {exc}")
         return False
-    
-    return False

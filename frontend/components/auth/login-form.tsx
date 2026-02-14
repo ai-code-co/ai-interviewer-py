@@ -1,9 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useState } from "react"
+import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -15,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { useAuth } from "@/components/auth/auth-provider"
 
 export function LoginForm() {
   const [email, setEmail] = useState("")
@@ -22,17 +22,7 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const supabase = createClient()
-
-  useEffect(() => {
-    const errorParam = searchParams.get('error')
-    if (errorParam === 'auth_failed') {
-      setError('Authentication failed. Please try again.')
-    } else if (errorParam === 'no_code') {
-      setError('Invalid authentication link. Please try again.')
-    }
-  }, [searchParams])
+  const { signIn } = useAuth()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -40,17 +30,18 @@ export function LoginForm() {
     setLoading(true)
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
-
-      if (error) throw error
-
+      if (!email.trim()) {
+        throw new Error("Email is required")
+      }
+      if (!password.trim()) {
+        throw new Error("Password is required")
+      }
+      await signIn(email.trim())
       router.push("/dashboard")
       router.refresh()
-    } catch (error: any) {
-      setError(error.message || "An error occurred during login")
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "An error occurred during login"
+      setError(message)
     } finally {
       setLoading(false)
     }
@@ -101,7 +92,7 @@ export function LoginForm() {
             {loading ? "Signing in..." : "Sign in"}
           </Button>
           <div className="text-center text-sm text-muted-foreground">
-            Don't have an account?{" "}
+            Don&apos;t have an account?{" "}
             <Link
               href="/register"
               className="text-primary underline-offset-4 hover:underline"
@@ -114,4 +105,3 @@ export function LoginForm() {
     </Card>
   )
 }
-

@@ -4,3 +4,6 @@ frontend/.env.local
 # frontend/package-lock.json  # Uncomment this line only if you have a specific reason to ignore package-lock.json
 frontend/node_modules/
 backend_py/API_CONTRACT.md
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
